@@ -14,7 +14,7 @@ from curobo.wrap.reacher.motion_gen import (
 from curobo.util import logger
 
 
-class CuroboPlanner:
+class CuroboController:
 
     def __init__(self, cfg, frame_dt, b2w):
         super().__init__()
@@ -129,6 +129,78 @@ class CuroboPlanner:
                 axis=1,
             )  # (T, 8)
             return res_result
+
+    def plan_batch(
+        self,
+        curr_joint_pos,
+        target_pose_list,
+        constraint_pose=None,
+    ):
+        """
+        Plan a batch of trajectories for multiple target poses.
+
+        Input:
+            - curr_joint_pos: List of current joint angles (1 x N)
+            - target_pose_list: List of target poses [sapien.Pose, sapien.Pose, ...]
+
+        Output:
+            - result['status']: numpy array of string values indicating "Success"/"Fail" for each pose
+            - result['position']: numpy array of joint positions with shape (N x T x J)
+                where N is number of target poses, T is number of waypoints, J is number of joints
+            - result['velocity']: numpy array of joint velocities with same shape as position
+        """
+
+        raise NotImplementedError("This function is under testing and not ready for use.")
+
+        num_poses = len(target_pose_list)
+        # transformation from world to arm's base
+        world_base_pose = np.concatenate([
+            np.array(self.robot_origin_pose.p),
+            np.array(self.robot_origin_pose.q),
+        ])
+        poses_list = []
+        for target_pose in target_pose_list:
+            world_target_pose = np.concatenate([np.array(target_pose.p), np.array(target_pose.q)])
+            base_target_pose_p, base_target_pose_q = self.world_to_base(world_base_pose, world_target_pose)
+
+            base_target_pose_list = list(base_target_pose_p) + list(base_target_pose_q)
+            poses_list.append(base_target_pose_list)
+
+        poses_cuda = torch.tensor(poses_list, dtype=torch.float32).cuda()
+        goal_pose_of_ee = Pose(poses_cuda[:, :3], poses_cuda[:, 3:])
+        joint_indices = [self.all_joints.index(name) for name in self.active_joints_name if name in self.all_joints]
+        joint_angles = [curr_joint_pos[index] for index in joint_indices]
+        joint_angles = [round(angle, 5) for angle in joint_angles]  # avoid the precision problem
+        joint_angles_cuda = (torch.tensor(joint_angles, dtype=torch.float32).cuda().reshape(1, -1))
+        joint_angles_cuda = torch.cat([joint_angles_cuda] * num_poses, dim=0)
+        start_joint_states = JointState.from_position(joint_angles_cuda, joint_names=self.active_joints_name)
+        # plan
+        plan_config = MotionGenPlanConfig(max_attempts=10)
+        if constraint_pose is not None:
+            pose_cost_metric = PoseCostMetric(
+                hold_partial_pose=True,
+                hold_vec_weight=self.motion_gen.tensor_args.to_device(constraint_pose),
+            )
+            plan_config.pose_cost_metric = pose_cost_metric
+
+        try:
+            result = self.motion_gen_batch.plan_batch(start_joint_states, goal_pose_of_ee, plan_config)
+        except Exception as e:
+            return {"status": ["Failure" for i in range(10)]}
+
+        # output
+        res_result = dict()
+        # Convert boolean success values to "Success"/"Failure" strings
+        success_array = result.success.cpu().numpy()
+        status_array = np.array(["Success" if s else "Failure" for s in success_array], dtype=object)
+        res_result["status"] = status_array
+
+        if np.all(res_result["status"] == "Failure"):
+            return res_result
+
+        res_result["position"] = np.array(result.interpolated_plan.position.to("cpu"))
+        res_result["velocity"] = np.array(result.interpolated_plan.velocity.to("cpu"))
+        return res_result
 
     def world_to_base(self, base_pose, target_pose):
         '''
