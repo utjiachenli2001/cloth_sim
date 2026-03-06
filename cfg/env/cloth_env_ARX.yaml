@@ -1,6 +1,62 @@
-name: sim.env.ClothEnvARXV1
-viewer: gl
-num_frames: 1000
+name: sim.env.ClothEnvARX
 headless: False
 use_graph: True
-planner: diffik
+num_robot: 2
+endeffector_id: 6
+num_arm_joints: 6
+num_gripper_joints: 2
+use_mujoco: True
+cloth_solver_type: style3d
+
+assets:
+  - name: left_arm
+    type: urdf
+    path: experiments/assets/robots/ARX-X5/X5A.urdf
+    init_q: [0.0, 1.5707963, 1.5707963, 0.0, 0.0, 0.0]
+    pose: [
+      0.0, -1.0, 0.0, 0.5,
+      1.0, 0.0, 0.0, -0.55,
+      0.0, 0.0, 1.0, 0.01,
+      0.0, 0.0, 0.0, 1.0
+    ]
+  - name: right_arm
+    type: urdf
+    path: experiments/assets/robots/ARX-X5/X5A.urdf
+    init_q: [0.0, 1.5707963, 1.5707963, 0.0, 0.0, 0.0]
+    pose: [
+      0.0, 1.0, 0.0, 0.5,
+      -1.0, 0.0, 0.0, 0.55,
+      0.0, 0.0, 1.0, 0.01,
+      0.0, 0.0, 0.0, 1.0
+    ]
+  - name: cloth
+    type: mesh
+    mesh_type: cloth
+    path: experiments/assets/meshes/Female_T_Shirt.usd
+    prim_path: /Root/Female_T_Shirt/Root_Garment
+    center: True
+    cloth_uv_scale: 1e-3
+    cloth_density: 0.5
+    scale: 1.0
+    initial_velocity: [0.0, 0.0, 0.0]
+    tri_aniso_ke: [5.0e2, 5.0e2, 5.0e2]
+    edge_aniso_ke: [2.0e-5, 2.0e-5, 2.0e-5]
+    particle_radius: 0.003
+    pose: [
+      0.0, -1.0, 0.0, 0.4,
+      1.0,  0.0, 0.0, 0.0,
+      0.0,  0.0, 1.0, 0.2,
+      0.0,  0.0, 0.0, 1.0
+    ]
+  - name: board
+    type: mesh
+    mesh_type: rigid
+    path: experiments/assets/meshes/board.stl
+    is_static: True
+    scale: 1.0
+    pose: [
+      1.0, 0.0, 0.0, 0.70,
+      0.0, 1.0, 0.0, 0.0,
+      0.0, 0.0, 1.0, 0.15,
+      0.0, 0.0, 0.0, 1.0
+    ]

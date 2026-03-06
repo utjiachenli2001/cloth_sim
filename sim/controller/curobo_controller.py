@@ -1,6 +1,7 @@
+import numpy as np
+import warp as wp
 from pathlib import Path
 import torch
-import numpy as np
 import transforms3d as t3d
 
 from curobo.types.math import Pose
@@ -13,26 +14,22 @@ from curobo.wrap.reacher.motion_gen import (
 )
 from curobo.util import logger
 
+from .base_controller import BaseController
+from ..utils.env_utils import xyzw_to_wxyz
 
-class CuroboPlanner:
 
-    def __init__(self, cfg, frame_dt, b2w):
+class CuroboController(BaseController):
+
+    def __init__(self, cfg):
         super().__init__()
-        logger.setup_logger(level="error", logger_name="curobo")
-
         self.cfg = cfg
-        self.dt = frame_dt
-        self.b2w = b2w
-        self.yml_path = str(Path(__file__).parents[2] / 'experiments/assets/robots/ARX-X5/curobo.yml')
+        print("Warning: CuroboController currently only supports ARX-X5 robot with 6-DOF arm and 2-DOF gripper!")
 
-        self.joint_names = [
-            'joint1',
-            'joint2',
-            'joint3',
-            'joint4',
-            'joint5',
-            'joint6',
-        ]
+    def initialize_resources(self, env) -> None:
+        self.yml_path = str(Path(__file__).parents[2] / 'experiments/assets/robots/ARX-X5/curobo.yml')
+        self.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+
+        self.num_joints_per_robot = env.num_arm_joints + env.num_gripper_joints
 
         # motion generation
         world_config = {
@@ -49,7 +46,7 @@ class CuroboPlanner:
         motion_gen_config = MotionGenConfig.load_from_robot_config(
             self.yml_path,
             world_config,
-            interpolation_dt=self.dt,
+            interpolation_dt=env.frame_dt,
             num_trajopt_seeds=1,
         )
         self.motion_gen = MotionGen(motion_gen_config)
@@ -57,39 +54,72 @@ class CuroboPlanner:
         motion_gen_config = MotionGenConfig.load_from_robot_config(
             self.yml_path,
             world_config,
-            interpolation_dt=self.dt,
+            interpolation_dt=env.frame_dt,
             num_trajopt_seeds=1,
             num_graph_seeds=1,
         )
         self.motion_gen_batch = MotionGen(motion_gen_config)
         self.motion_gen_batch.warmup(batch=10)  # rotate_num
 
-    def plan_path(
+        self._curobo_prev_target = None
+        self._curobo_plan_step = 0
+        self._curobo_paths = [{}] * len(env.b2w_list)
+
+    def compute(self, env, target: np.ndarray) -> None:
+        if self._curobo_prev_target is None or not np.allclose(self._curobo_prev_target, target):
+            self._plan(env, target)
+            self._curobo_plan_step = 0
+            self._curobo_prev_target = target.copy()
+
+        target_pos_list = []
+        target_vel_list = []
+
+        for ri in range(env.num_robot):
+            path = self._curobo_paths[ri]
+            step = min(self._curobo_plan_step, len(path['position']) - 1)
+            target_pos_list.append(path['position'][step])
+            target_vel_list.append(path['velocity'][step])
+
+        target_pos = np.concatenate(target_pos_list)
+        target_vel = np.concatenate(target_vel_list)
+
+        env.control.joint_target_pos.assign(wp.array(target_pos, dtype=float))
+        env.control.joint_target_vel.assign(wp.array(target_vel, dtype=float))
+
+        self._curobo_plan_step += 1
+
+    def _plan(self, env, target: np.ndarray) -> None:
+        joint_q = env.state_0.joint_q.numpy()
+        target_pose = target.reshape(env.num_robot, 8)
+        target_pose_wxyz = xyzw_to_wxyz(target_pose)
+
+        for ri in range(env.num_robot):
+            result = self.controller_plan_path(
+                env=env,
+                curr_joint_pos=joint_q[ri * self.num_joints_per_robot : (ri + 1) * self.num_joints_per_robot],
+                target_pose=target_pose_wxyz[ri],
+                b2w=env.b2w_list[ri]
+            )
+            if result['status'] != 'Success':
+                raise Exception(f'CuRobo planning failed for robot {ri}!')
+            self._curobo_paths[ri] = result
+
+    def controller_plan_path(
         self,
+        env,
         curr_joint_pos,
         target_pose,
+        b2w,
         constraint_pose=None,
     ):
-        """
-        Plan a trajectory for a single target pose.
-        Input:
-            - curr_joint_pos: List of current joint angles (J)
-            - target_pose: target end-effector pose (xyz, quat, gripper)
-        Output:
-            - result['status']: "Success" or "Fail"
-            - result['position']: numpy array of joint positions with shape (T x J)
-                where T is number of waypoints, J is number of joints
-            - result['velocity']: numpy array of joint velocities with same shape as position
-        """
-
-        t2b = self.world_to_base(self.b2w, target_pose[:-1])
+        t2b = self.world_to_base(b2w, target_pose[:-1])
         goal_pose_of_ee = Pose.from_list(t2b.tolist())
 
         target_gripper_pos = target_pose[-1]
-        curr_gripper_pos = curr_joint_pos[-2:].mean()
+        curr_gripper_pos = curr_joint_pos[env.num_arm_joints:env.num_arm_joints + env.num_gripper_joints].mean()
 
         start_joint_states = JointState.from_position(
-            torch.from_numpy(curr_joint_pos[:-2]).to(torch.float32).cuda().reshape(1, -1),
+            torch.from_numpy(curr_joint_pos[:env.num_arm_joints]).to(torch.float32).cuda().reshape(1, -1),
             joint_names=self.joint_names,
         )
         # plan
@@ -121,7 +151,7 @@ class CuroboPlanner:
                 [res_result["position"], gripper_result.reshape(-1, 1), gripper_result.reshape(-1, 1)],
                 axis=1,
             )  # (T, 8)
-            gripper_velocity = gripper_step_size / self.dt * np.ones((num_step, 1))
+            gripper_velocity = gripper_step_size / env.frame_dt * np.ones((num_step, 1))
             gripper_velocity[0] = 0.0  # start from 0 velocity
             gripper_velocity[-1] = 0.0  # end with 0 velocity
             res_result["velocity"] = np.concatenate(

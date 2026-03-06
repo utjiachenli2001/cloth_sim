@@ -25,29 +25,100 @@ source .venv/bin/activate
 
 # install newton
 cd newton
-uv pip install -r pyproject.toml --extra examples
+pip install -e ".[examples]"
+cd ..
 
 # (optionally) verify installation by running newton examples
+cd newton
 python -m newton.examples robot_h1
+cd ..
 
 # install main dependencies
 uv pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 
 # additional packages
-uv pip install opencv-python omegaconf hydra-core pynput transforms3d ipdb joycon-python hid pyglm loop-rate-limiters mink
+uv pip install opencv-python omegaconf hydra-core pynput transforms3d
+
+# for curobo
+mkdir third-party
+cd third-party
+git clone git@github.com:NVlabs/curobo.git
+cd curobo
+uv pip install --no-build-isolation -e .
+
+# version fix
+uv pip install imgui_bundle==1.92.5
+uv pip install --upgrade warp-lang
 ```
 
 ---
 
-## Usage
+## Usage - Quick Example
 
 ```
+### Launch examples
+
+# normal (ik controller, default gl renderer)
 python experiments/demo.py
+
+# headless
+python experiments/demo.py env.headless=True save_state=True
+
+# save video after simulation with save_state=True (with example dir)
+python experiments/make_video.py log/experiments/output_demo/20260305-212500 --fps 60 --output log/experiments/output_demo/20260305-212500.mp4
+
+### Example options
+
+# tiled camera renderer (fast, parallelizable rendering, random shape colors, can perform depth rendering)
+python experiments/demo.py renderer=tiled_camera_renderer
+
+# tiled camera renderer + random shape color disabled
+python experiments/demo.py renderer=tiled_camera_renderer renderer.colors_per_shape=False
+
+# curobo controller
+python experiments/demo.py controller=curobo
+
+# diffik controller
+python experiments/demo.py controller=diffik
 ```
 
-This command runs a manually defined robot action trajectory, shown as follows:
+All examples run a manually defined robot action trajectory. The headless + save video command should output a video as follows:
 
-https://github.com/user-attachments/assets/d9273615-c808-4415-bdf4-64beb6ecd5f9
+https://github.com/user-attachments/assets/aff80727-78e5-4b54-a5f4-3e10f637680f
+
+Using the tiled camera renderer + save video should output a video as follows:
+
+https://github.com/user-attachments/assets/82cde720-dcd2-4403-98d3-fc936d01b77d
+
+With random shape color disabled:
+
+https://github.com/user-attachments/assets/28c0057b-819f-40bd-8fd0-b26fe70b200b
+
+---
+
+## Usage - Keyboard Teleoperation
+
+```
+python experiments/teleop_keyboard.py
+```
+
+**Key mappings:**
+
+- ```1, 2```, switching to left arm, switching to right arm
+- ```i, j, k, l```: forward (farther), left, backward (closer), right
+- ```p, ;```: up, down
+- ```z, x```: rotate around z (cartesian world frame)
+- ```c, v```: rotate around x (cartesian world frame)
+- ```b, n```: rotate around y (cartesian world frame)
+- ```',', '.'```: open gripper, close gripper
+
+All config settings can be applied the same way as the previous demo.
+
+---
+
+## Usage - Scene Layout
+
+Robot and object layout configs could be configured in ```cfg/env/cloth_env_ARX.yaml```.
 
 ---
 

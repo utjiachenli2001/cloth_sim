@@ -10,75 +10,41 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parents[1]))
 OmegaConf.register_new_resolver("eval", eval, replace=True)
+from experiments.utils.dir_utils import mkdir
 import sim.env
 import newton
 import newton.utils
 import newton.viewer
 
 
-class ReachEnv:
+class DemoEnv:
 
     def __init__(self, cfg):
         self.cfg = cfg
+        if cfg.save_state:
+            self.cnt = 0
+            self.episode_id = 0
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.out_path = os.path.join(cfg.exp_root, 'output_demo', f'{timestamp}')
+            mkdir(Path(f'{self.out_path}'), resume=False, overwrite=False)
+            OmegaConf.save(cfg, f'{self.out_path}/hydra.yaml', resolve=True)
 
     def run(self):
         cfg = self.cfg
 
-        if cfg.env.viewer == "gl":
-            viewer = newton.viewer.ViewerGL(headless=cfg.env.headless)
-        elif cfg.env.viewer == "usd":
-            if cfg.env.output_path is None:
-                raise ValueError("--output-path is required when using usd viewer")
-            viewer = newton.viewer.ViewerUSD(output_path=cfg.env.output_path, num_frames=cfg.env.num_frames)
-        elif cfg.env.viewer == "rerun":
-            viewer = newton.viewer.ViewerRerun()
-        elif cfg.env.viewer == "null":
-            viewer = newton.viewer.ViewerNull(num_frames=cfg.env.num_frames)
-        else:
-            raise ValueError(f"Invalid viewer: {cfg.env.viewer}")
-
-        env = eval(cfg.env.name)(cfg=cfg, viewer=viewer)
+        env = eval(cfg.env.name)(cfg=cfg)
+        env.initialize_resources()
 
         targets = np.array(
             [
                 [
-                    0.60, -0.25, 0.50, 0.0, 0.0, np.sin(np.pi / 8), np.cos(np.pi / 8), 0.01,
-                    0.60, 0.25, 0.50, 0.0, 0.0, -np.sin(np.pi / 8), np.cos(np.pi / 8), 0.01,
+                    0.50, -0.25, 0.40, 0.0, 0.0, np.sin(np.pi / 4), np.cos(np.pi / 4), 0.04,
+                    0.50, 0.25, 0.40, 0.0, 0.0, -np.sin(np.pi / 4), np.cos(np.pi / 4), 0.04,
                     0.5
                 ],
                 [
-                    0.45, -0.17, 0.205, -0.10401744, 0.45360428, 0.26122794, 0.8456853, 0.04,
-                    0.45, 0.17, 0.205, 0.10401744, 0.45360428, -0.26122794, 0.845685, 0.04,
-                    0.5
-                ],
-                [
-                    0.45, -0.17, 0.205, -0.10401744, 0.45360428, 0.26122794, 0.8456853, 0.01,
-                    0.45, 0.17, 0.205, 0.10401744, 0.45360428, -0.26122794, 0.845685, 0.01,
-                    0.5
-                ],
-                [
-                    0.45, -0.17, 0.30, -0.10401744, 0.45360428, 0.26122794, 0.8456853, 0.01,
-                    0.45, 0.17, 0.30, 0.10401744, 0.45360428, -0.26122794, 0.845685, 0.01,
-                    0.5
-                ],
-                [
-                    0.60, -0.17, 0.30, -0.10401744, 0.45360428, 0.26122794, 0.8456853, 0.01,
-                    0.60, 0.17, 0.30, 0.10401744, 0.45360428, -0.26122794, 0.845685, 0.01,
-                    0.5
-                ],
-                [
-                    0.75, -0.17, 0.30, -0.10401744, 0.45360428, 0.26122794, 0.8456853, 0.01,
-                    0.75, 0.17, 0.30, 0.10401744, 0.45360428, -0.26122794, 0.845685, 0.01,
-                    0.5
-                ],
-                [
-                    0.75, -0.17, 0.30, -0.10401744, 0.45360428, 0.26122794, 0.8456853, 0.04,
-                    0.75, 0.17, 0.30, 0.10401744, 0.45360428, -0.26122794, 0.845685, 0.04,
-                    0.5
-                ],
-                [
-                    0.75, -0.17, 0.40, -0.10401744, 0.45360428, 0.26122794, 0.8456853, 0.04,
-                    0.75, 0.17, 0.40, 0.10401744, 0.45360428, -0.26122794, 0.845685, 0.04,
+                    0.70, -0.40, 0.40, 0.0, 0.0, np.sin(np.pi / 8), np.cos(np.pi / 8), 0.04,
+                    0.70, 0.40, 0.40, 0.0, 0.0, -np.sin(np.pi / 8), np.cos(np.pi / 8), 0.04,
                     0.5
                 ],
             ], dtype=np.float32
@@ -88,28 +54,32 @@ class ReachEnv:
         target = targets[target_idx, :-1].copy()
         to_target_time = targets[target_idx, -1]
 
-        if hasattr(env, "gui") and hasattr(env.viewer, "register_ui_callback"):
-            env.viewer.register_ui_callback(lambda ui: env.gui(ui), position="side")
-
         while env.viewer.is_running():
 
             if not env.viewer.is_paused():
-                with wp.ScopedTimer("step", active=False):
-                    env.step({'target': target})
+                env.step({'target': target})
             
             if env.sim_time > to_target_time and target_idx < (targets.shape[0] - 1):
                 target_idx += 1
                 target = targets[target_idx, :-1].copy()
                 to_target_time += targets[target_idx, -1]
 
-            with wp.ScopedTimer("render", active=False):
-                env.render()
+            render_result = env.render(return_renderings=self.cfg.save_state)
+
+            if self.cfg.save_state:
+                assert 'rgba' in render_result
+                rgba = render_result['rgba']
+                cv2.imwrite(
+                    f'{self.out_path}/{self.cnt:06d}.png',
+                    cv2.cvtColor(rgba[:, :, :3], cv2.COLOR_RGB2BGR)
+                )
+                self.cnt += 1
 
 
 @hydra.main(version_base='1.2', config_path='../cfg', config_name="default")
 def main(cfg):
-    teleop = ReachEnv(cfg)
-    teleop.run()
+    demo_env = DemoEnv(cfg)
+    demo_env.run()
 
 
 if __name__ == "__main__":
