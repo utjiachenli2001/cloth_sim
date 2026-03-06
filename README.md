@@ -53,7 +53,7 @@ uv pip install --upgrade warp-lang
 
 ---
 
-## Usage
+## Usage - Quick Example
 
 ```
 ### Launch examples
@@ -96,9 +96,29 @@ https://github.com/user-attachments/assets/28c0057b-819f-40bd-8fd0-b26fe70b200b
 
 ---
 
-## Customize
+## Usage - Keyboard Teleoperation
 
-Object and robot position configs could be configured in ```cfg/env/cloth_env_ARX.yaml```.
+```
+python experiments/teleop_keyboard.py
+```
+
+**Key mappings:**
+
+- ```1, 2```, switching to left arm, switching to right arm
+- ```i, j, k, l```: forward (farther), left, backward (closer), right
+- ```p, ;```: up, down
+- ```z, x```: rotate around z (cartesian world frame)
+- ```c, v```: rotate around x (cartesian world frame)
+- ```b, n```: rotate around y (cartesian world frame)
+- ```',', '.'```: open gripper, close gripper
+
+All config settings can be applied the same way as the previous demo.
+
+---
+
+## Usage - Scene Layout
+
+Robot and object layout configs could be configured in ```cfg/env/cloth_env_ARX.yaml```.
 
 ---
 
