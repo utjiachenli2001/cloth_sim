@@ -147,7 +147,7 @@ class KeyboardTeleopEnv:
                 )
 
             target[arm_id * 8 + 7] = target[arm_id * 8 + 7] + finger_change
-            target[arm_id * 8 + 7] = np.clip(target[arm_id * 8 + 7], 0.0, 0.04)
+            target[arm_id * 8 + 7] = np.clip(target[arm_id * 8 + 7], 0.005, 0.04)  # 0.005 to prevent penetration
 
             print(f"Target: {target}")
 
